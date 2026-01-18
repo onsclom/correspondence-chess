@@ -1,0 +1,39 @@
+---
+interface Props {
+  title: string;
+  description?: string;
+  ogImage?: string;
+}
+
+const { title, description = 'Correspondence chess - share moves via URL', ogImage } = Astro.props;
+const canonicalUrl = Astro.url.href;
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalUrl} />
+    {ogImage && <meta property="og:image" content={ogImage} />}
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    {ogImage && <meta name="twitter:image" content={ogImage} />}
+
+    <link rel="canonical" href={canonicalUrl} />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♟</text></svg>" />
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>

@@ -1,0 +1,505 @@
+---
+import Layout from '../layouts/Layout.astro';
+import '../styles/chess.css';
+import {
+  type Move,
+  createInitialState,
+  applyMove,
+  getGameStatus,
+  isInCheck,
+  moveToSAN,
+} from '../lib/chess';
+import { decodeGameState, encodeGameFromMoves } from '../lib/encoding';
+import { getPieceSVG } from '../lib/pieces';
+
+// Parse game state from URL
+const gameParam = Astro.url.searchParams.get('g') || '';
+const { state: currentState, moves: currentMoves } = decodeGameState(gameParam);
+
+// Game status
+const status = getGameStatus(currentState);
+const inCheck = isInCheck(currentState.board, currentState.turn);
+
+// Build move history with SAN
+const moveHistory: { number: number; white: string; black?: string }[] = [];
+let tempState = createInitialState();
+for (let i = 0; i < currentMoves.length; i++) {
+  const san = moveToSAN(tempState, currentMoves[i]);
+  tempState = applyMove(tempState, currentMoves[i]);
+
+  if (i % 2 === 0) {
+    moveHistory.push({ number: Math.floor(i / 2) + 1, white: san });
+  } else {
+    moveHistory[moveHistory.length - 1].black = san;
+  }
+}
+
+// OG Image URL
+const ogImageUrl = `${Astro.url.origin}/og?g=${gameParam}`;
+
+// Board orientation - flip when black's turn (fixed on page load)
+const isFlipped = currentState.turn === 'b';
+
+// Helper function for square classes
+function getSquareClass(row: number, col: number): string {
+  const classes = ['square'];
+  classes.push((row + col) % 2 === 0 ? 'light' : 'dark');
+
+  if (currentState.lastMove) {
+    if ((currentState.lastMove.from[0] === row && currentState.lastMove.from[1] === col) ||
+        (currentState.lastMove.to[0] === row && currentState.lastMove.to[1] === col)) {
+      classes.push('last-move');
+    }
+  }
+
+  const piece = currentState.board[row][col];
+  if (piece?.type === 'k' && piece.color === currentState.turn && inCheck) {
+    classes.push('check');
+  }
+
+  return classes.join(' ');
+}
+
+const currentUrl = Astro.url.href;
+const baseUrl = `${Astro.url.origin}${Astro.url.pathname}`;
+---
+
+<Layout
+  title="Correspondence Chess"
+  description={`Chess game - ${currentState.turn === 'w' ? 'White' : 'Black'} to move`}
+  ogImage={ogImageUrl}
+>
+  <div class="container">
+    <h1>Correspondence Chess</h1>
+
+    <div class="board-wrapper">
+      <div class="board" id="board" data-state={gameParam} data-moves={JSON.stringify(currentMoves)} data-flipped={isFlipped}>
+        {Array.from({ length: 8 }, (_, visualRow) =>
+          Array.from({ length: 8 }, (_, visualCol) => {
+            const row = isFlipped ? 7 - visualRow : visualRow;
+            const col = isFlipped ? 7 - visualCol : visualCol;
+            const piece = currentState.board[row][col];
+
+            return (
+              <div
+                class={getSquareClass(row, col)}
+                data-row={row}
+                data-col={col}
+                data-piece={piece ? `${piece.color}${piece.type}` : ''}
+              >
+                {piece && (
+                  <div class="piece" set:html={getPieceSVG(piece.type, piece.color)} />
+                )}
+              </div>
+            );
+          })
+        )}
+      </div>
+    </div>
+
+    <div class="game-info">
+      <div class="turn-indicator">
+        <span class={`turn-dot ${currentState.turn === 'w' ? 'white' : 'black'}`}></span>
+        <span>
+          {status === 'ongoing'
+            ? `${currentState.turn === 'w' ? 'White' : 'Black'} to move`
+            : status === 'checkmate'
+              ? `Checkmate! ${currentState.turn === 'w' ? 'Black' : 'White'} wins`
+              : status === 'stalemate'
+                ? 'Stalemate - Draw'
+                : status === 'draw_50_move'
+                  ? '50 Move Rule - Draw'
+                  : 'Draw - Insufficient Material'}
+        </span>
+      </div>
+
+      {inCheck && status === 'ongoing' && (
+        <div class="status-message check">Check!</div>
+      )}
+    </div>
+
+    {moveHistory.length > 0 && (
+      <div class="move-history">
+        <h3>Moves</h3>
+        <div class="moves-list">
+          {moveHistory.map(({ number, white, black }) => (
+            <div class="move-pair">
+              <span class="move-number">{number}.</span>
+              <span class="move">{white}</span>
+              {black && <span class="move">{black}</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <div class="share-section">
+      <h3>Share this position</h3>
+      <div class="share-url">
+        <input type="text" readonly value={currentUrl} id="share-url" />
+        <button class="btn btn-primary" id="copy-btn">Copy</button>
+      </div>
+    </div>
+
+    <div class="actions">
+      <a href={baseUrl} class="btn btn-secondary">New Game</a>
+    </div>
+
+    <!-- Promotion Modal -->
+    <div class="promotion-modal hidden" id="promotion-modal">
+      <div class="promotion-choices">
+        {['q', 'r', 'b', 'n'].map(p => (
+          <button class="promotion-choice" data-piece={p}>
+            <span set:html={getPieceSVG(p as 'q' | 'r' | 'b' | 'n', currentState.turn)} />
+          </button>
+        ))}
+      </div>
+    </div>
+
+    <!-- Copy notification -->
+    <div class="copy-notification" id="copy-notification">
+      Link copied! Share it with your opponent.
+    </div>
+  </div>
+
+  <script>
+    import {
+      type Move,
+      applyMove,
+      isLegalMove,
+      getLegalMoves,
+      getGameStatus,
+      isInCheck,
+    } from '../lib/chess';
+    import { decodeGameState, encodeGameFromMoves } from '../lib/encoding';
+    import { getPieceSVG } from '../lib/pieces';
+
+    const board = document.getElementById('board') as HTMLElement;
+    const copyBtn = document.getElementById('copy-btn') as HTMLButtonElement;
+    const shareUrlInput = document.getElementById('share-url') as HTMLInputElement;
+    const copyNotification = document.getElementById('copy-notification') as HTMLElement;
+    const promotionModal = document.getElementById('promotion-modal') as HTMLElement;
+
+    // Parse initial state
+    const initialGameParam = board.dataset.state || '';
+    let { state: gameState, moves: gameMoves } = decodeGameState(initialGameParam);
+
+    let selectedSquare: [number, number] | null = null;
+    let draggedPiece: HTMLElement | null = null;
+    let dragStartSquare: [number, number] | null = null;
+    let pendingPromotion: { from: [number, number]; to: [number, number] } | null = null;
+
+    function updateBoard() {
+      const status = getGameStatus(gameState);
+      const inCheck = isInCheck(gameState.board, gameState.turn);
+      const legalMoves = selectedSquare
+        ? getLegalMoves(gameState, selectedSquare[0], selectedSquare[1])
+        : [];
+
+      document.querySelectorAll('.square').forEach((el) => {
+        const square = el as HTMLElement;
+        const row = parseInt(square.dataset.row!);
+        const col = parseInt(square.dataset.col!);
+        const piece = gameState.board[row][col];
+
+        // Update classes
+        square.className = 'square';
+        square.classList.add((row + col) % 2 === 0 ? 'light' : 'dark');
+
+        if (selectedSquare && selectedSquare[0] === row && selectedSquare[1] === col) {
+          square.classList.add('selected');
+        }
+
+        if (gameState.lastMove) {
+          if ((gameState.lastMove.from[0] === row && gameState.lastMove.from[1] === col) ||
+              (gameState.lastMove.to[0] === row && gameState.lastMove.to[1] === col)) {
+            square.classList.add('last-move');
+          }
+        }
+
+        const isLegalTarget = legalMoves.some(m => m.to[0] === row && m.to[1] === col);
+        if (isLegalTarget) {
+          const targetPiece = gameState.board[row][col];
+          square.classList.add(targetPiece ? 'legal-capture' : 'legal-move');
+        }
+
+        if (piece?.type === 'k' && piece.color === gameState.turn && inCheck) {
+          square.classList.add('check');
+        }
+
+        // Update piece
+        square.dataset.piece = piece ? `${piece.color}${piece.type}` : '';
+        const pieceEl = square.querySelector('.piece') as HTMLElement | null;
+
+        if (piece) {
+          if (pieceEl) {
+            pieceEl.innerHTML = getPieceSVG(piece.type, piece.color);
+          } else {
+            const newPiece = document.createElement('div');
+            newPiece.className = 'piece';
+            newPiece.innerHTML = getPieceSVG(piece.type, piece.color);
+            square.appendChild(newPiece);
+          }
+        } else if (pieceEl) {
+          pieceEl.remove();
+        }
+      });
+
+      // Update URL and share input
+      const encoded = encodeGameFromMoves(gameMoves);
+      const newUrl = encoded
+        ? `${window.location.origin}${window.location.pathname}?g=${encoded}`
+        : `${window.location.origin}${window.location.pathname}`;
+
+      window.history.replaceState(null, '', newUrl);
+      shareUrlInput.value = newUrl;
+
+      // Update turn indicator
+      const turnDot = document.querySelector('.turn-dot') as HTMLElement;
+      const turnText = turnDot?.nextElementSibling as HTMLElement;
+
+      if (turnDot && turnText) {
+        turnDot.className = `turn-dot ${gameState.turn === 'w' ? 'white' : 'black'}`;
+        if (status === 'ongoing') {
+          turnText.textContent = `${gameState.turn === 'w' ? 'White' : 'Black'} to move`;
+        } else if (status === 'checkmate') {
+          turnText.textContent = `Checkmate! ${gameState.turn === 'w' ? 'Black' : 'White'} wins`;
+        } else if (status === 'stalemate') {
+          turnText.textContent = 'Stalemate - Draw';
+        } else {
+          turnText.textContent = 'Draw';
+        }
+      }
+    }
+
+    function handleSquareClick(row: number, col: number) {
+      const status = getGameStatus(gameState);
+      if (status !== 'ongoing') return;
+
+      const piece = gameState.board[row][col];
+
+      if (selectedSquare) {
+        const legalMoves = getLegalMoves(gameState, selectedSquare[0], selectedSquare[1]);
+        const targetMove = legalMoves.find(m => m.to[0] === row && m.to[1] === col);
+
+        if (targetMove) {
+          makeMove(targetMove);
+          return;
+        }
+      }
+
+      if (piece && piece.color === gameState.turn) {
+        if (selectedSquare && selectedSquare[0] === row && selectedSquare[1] === col) {
+          selectedSquare = null;
+        } else {
+          selectedSquare = [row, col];
+        }
+        updateBoard();
+      } else if (selectedSquare) {
+        selectedSquare = null;
+        updateBoard();
+      }
+    }
+
+    function makeMove(move: Move) {
+      const piece = gameState.board[move.from[0]][move.from[1]];
+
+      const isPromotion = piece?.type === 'p' &&
+        ((piece.color === 'w' && move.to[0] === 0) || (piece.color === 'b' && move.to[0] === 7));
+
+      if (isPromotion && !move.promotion) {
+        pendingPromotion = { from: move.from, to: move.to };
+        showPromotionModal();
+        return;
+      }
+
+      if (isLegalMove(gameState, move)) {
+        gameMoves.push(move);
+        gameState = applyMove(gameState, move);
+        selectedSquare = null;
+        updateBoard();
+
+        const encoded = encodeGameFromMoves(gameMoves);
+        const newUrl = `${window.location.origin}${window.location.pathname}?g=${encoded}`;
+        navigator.clipboard.writeText(newUrl).then(() => {
+          showCopyNotification();
+        }).catch(() => {});
+      }
+    }
+
+    function showPromotionModal() {
+      promotionModal.classList.remove('hidden');
+    }
+
+    function hidePromotionModal() {
+      promotionModal.classList.add('hidden');
+      pendingPromotion = null;
+    }
+
+    function showCopyNotification() {
+      copyNotification.classList.add('visible');
+      setTimeout(() => {
+        copyNotification.classList.remove('visible');
+      }, 3000);
+    }
+
+    // Click handler
+    board.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement;
+      const square = target.closest('.square') as HTMLElement | null;
+      if (square) {
+        const row = parseInt(square.dataset.row!);
+        const col = parseInt(square.dataset.col!);
+        handleSquareClick(row, col);
+      }
+    });
+
+    // Drag and drop
+    let dragOffsetX = 0;
+    let dragOffsetY = 0;
+
+    function startDrag(row: number, col: number, clientX: number, clientY: number) {
+      const piece = gameState.board[row][col];
+      if (!piece || piece.color !== gameState.turn || getGameStatus(gameState) !== 'ongoing') return;
+
+      selectedSquare = [row, col];
+      dragStartSquare = [row, col];
+
+      const squareEl = document.querySelector(`[data-row="${row}"][data-col="${col}"]`) as HTMLElement;
+      const pieceEl = squareEl.querySelector('.piece') as HTMLElement;
+
+      if (pieceEl) {
+        draggedPiece = pieceEl.cloneNode(true) as HTMLElement;
+        draggedPiece.classList.add('dragging');
+        document.body.appendChild(draggedPiece);
+
+        const rect = pieceEl.getBoundingClientRect();
+        dragOffsetX = clientX - rect.left - rect.width / 2;
+        dragOffsetY = clientY - rect.top - rect.height / 2;
+
+        draggedPiece.style.left = `${clientX - dragOffsetX - 40}px`;
+        draggedPiece.style.top = `${clientY - dragOffsetY - 40}px`;
+
+        pieceEl.style.opacity = '0.3';
+      }
+
+      updateBoard();
+    }
+
+    function moveDrag(clientX: number, clientY: number) {
+      if (draggedPiece) {
+        draggedPiece.style.left = `${clientX - dragOffsetX - 40}px`;
+        draggedPiece.style.top = `${clientY - dragOffsetY - 40}px`;
+      }
+    }
+
+    function endDrag(clientX: number, clientY: number) {
+      if (draggedPiece && dragStartSquare) {
+        draggedPiece.remove();
+        draggedPiece = null;
+
+        const startSquare = document.querySelector(
+          `[data-row="${dragStartSquare[0]}"][data-col="${dragStartSquare[1]}"]`
+        ) as HTMLElement;
+        const pieceEl = startSquare?.querySelector('.piece') as HTMLElement | null;
+        if (pieceEl) pieceEl.style.opacity = '1';
+
+        const squares = document.querySelectorAll('.square');
+        for (const sq of squares) {
+          const rect = sq.getBoundingClientRect();
+          if (clientX >= rect.left && clientX <= rect.right &&
+              clientY >= rect.top && clientY <= rect.bottom) {
+            const row = parseInt((sq as HTMLElement).dataset.row!);
+            const col = parseInt((sq as HTMLElement).dataset.col!);
+
+            const legalMoves = getLegalMoves(gameState, dragStartSquare[0], dragStartSquare[1]);
+            const targetMove = legalMoves.find(m => m.to[0] === row && m.to[1] === col);
+
+            if (targetMove) {
+              makeMove(targetMove);
+            } else {
+              selectedSquare = null;
+              updateBoard();
+            }
+            break;
+          }
+        }
+
+        dragStartSquare = null;
+      }
+    }
+
+    // Mouse events
+    board.addEventListener('mousedown', (e) => {
+      const square = (e.target as HTMLElement).closest('.square') as HTMLElement | null;
+      if (square) {
+        const row = parseInt(square.dataset.row!);
+        const col = parseInt(square.dataset.col!);
+        startDrag(row, col, e.clientX, e.clientY);
+      }
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      moveDrag(e.clientX, e.clientY);
+    });
+
+    document.addEventListener('mouseup', (e) => {
+      endDrag(e.clientX, e.clientY);
+    });
+
+    // Touch events
+    board.addEventListener('touchstart', (e) => {
+      const touch = e.touches[0];
+      const square = (touch.target as HTMLElement).closest('.square') as HTMLElement | null;
+      if (square) {
+        const row = parseInt(square.dataset.row!);
+        const col = parseInt(square.dataset.col!);
+        startDrag(row, col, touch.clientX, touch.clientY);
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+      if (draggedPiece) {
+        e.preventDefault();
+        const touch = e.touches[0];
+        moveDrag(touch.clientX, touch.clientY);
+      }
+    }, { passive: false });
+
+    document.addEventListener('touchend', (e) => {
+      if (draggedPiece) {
+        const touch = e.changedTouches[0];
+        endDrag(touch.clientX, touch.clientY);
+      }
+    });
+
+    // Copy button
+    copyBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(shareUrlInput.value).then(() => {
+        showCopyNotification();
+      }).catch(() => {
+        shareUrlInput.select();
+        document.execCommand('copy');
+        showCopyNotification();
+      });
+    });
+
+    // Promotion modal
+    promotionModal.addEventListener('click', (e) => {
+      const choice = (e.target as HTMLElement).closest('.promotion-choice') as HTMLElement | null;
+      if (choice && pendingPromotion) {
+        const piece = choice.dataset.piece as 'q' | 'r' | 'b' | 'n';
+        makeMove({
+          from: pendingPromotion.from,
+          to: pendingPromotion.to,
+          promotion: piece,
+        });
+        hidePromotionModal();
+      } else if (e.target === promotionModal) {
+        hidePromotionModal();
+        selectedSquare = null;
+        updateBoard();
+      }
+    });
+  </script>
+</Layout>
