@@ -199,11 +199,13 @@ const baseUrl = `${Astro.url.origin}${Astro.url.pathname}`;
   <script>
     import {
       type Move,
+      createInitialState,
       applyMove,
       isLegalMove,
       getLegalMoves,
       getGameStatus,
       isInCheck,
+      moveToSAN,
     } from "../lib/chess";
     import { decodeGameState, encodeGameFromMoves } from "../lib/encoding";
     import { getPieceSVG } from "../lib/pieces";
@@ -232,6 +234,62 @@ const baseUrl = `${Astro.url.origin}${Astro.url.pathname}`;
       from: [number, number];
       to: [number, number];
     } | null = null;
+
+    function updateMoveHistory() {
+      // Build move history from gameMoves
+      const moveHistory: { number: number; white: string; black?: string }[] = [];
+      let tempState = createInitialState();
+
+      for (let i = 0; i < gameMoves.length; i++) {
+        const san = moveToSAN(tempState, gameMoves[i]);
+        tempState = applyMove(tempState, gameMoves[i]);
+
+        if (i % 2 === 0) {
+          moveHistory.push({ number: Math.floor(i / 2) + 1, white: san });
+        } else {
+          moveHistory[moveHistory.length - 1].black = san;
+        }
+      }
+
+      // Find or create the move-history container
+      let moveHistoryContainer = document.querySelector('.move-history') as HTMLElement | null;
+
+      if (gameMoves.length === 0) {
+        // Remove the container if no moves
+        if (moveHistoryContainer) {
+          moveHistoryContainer.remove();
+        }
+        return;
+      }
+
+      // Create container if it doesn't exist
+      if (!moveHistoryContainer) {
+        moveHistoryContainer = document.createElement('div');
+        moveHistoryContainer.className = 'move-history';
+        moveHistoryContainer.innerHTML = '<h3>Moves</h3><div class="moves-list"></div>';
+
+        // Insert before share-section
+        const shareSection = document.querySelector('.share-section');
+        if (shareSection) {
+          shareSection.parentNode?.insertBefore(moveHistoryContainer, shareSection);
+        }
+      }
+
+      // Update the moves list
+      const movesList = moveHistoryContainer.querySelector('.moves-list') as HTMLElement;
+      if (movesList) {
+        movesList.innerHTML = moveHistory.map(({ number, white, black }) => `
+          <div class="move-pair">
+            <span class="move-number">${number}.</span>
+            <span class="move">${white}</span>
+            ${black ? `<span class="move">${black}</span>` : ''}
+          </div>
+        `).join('');
+
+        // Auto-scroll to the bottom
+        movesList.scrollTop = movesList.scrollHeight;
+      }
+    }
 
     function updateBoard() {
       const status = getGameStatus(gameState);
@@ -324,6 +382,9 @@ const baseUrl = `${Astro.url.origin}${Astro.url.pathname}`;
           turnText.textContent = "Draw";
         }
       }
+
+      // Update move history
+      updateMoveHistory();
     }
 
     function handleSquareClick(row: number, col: number) {
