@@ -65,8 +65,8 @@ const baseUrl = `${Astro.url.origin}${Astro.url.pathname}`;
 ---
 
 <Layout
-  title="Correspondence Chess"
-  description={`Chess game - ${currentState.turn === 'w' ? 'White' : 'Black'} to move`}
+  title={currentMoves.length > 0 ? `Correspondence Chess - ${currentState.turn === 'w' ? 'White' : 'Black'} to move` : 'Correspondence Chess'}
+  description={currentMoves.length > 0 ? `Move ${Math.ceil(currentMoves.length / 2)} - ${currentState.turn === 'w' ? 'White' : 'Black'}'s turn. Play chess with friends by sharing a link.` : 'Play chess with friends by sharing a link. No accounts needed.'}
   ogImage={ogImageUrl}
 >
   <div class="container">
