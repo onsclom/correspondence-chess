@@ -1,7 +1,8 @@
 // OG Image generation endpoint
-// Generates an SVG image of the current board state (1200x630 for OG)
+// Generates a PNG image of the current board state (1200x630 for OG)
 
 import type { APIRoute } from 'astro';
+import { Resvg } from '@resvg/resvg-js';
 import { decodeGameState } from '../lib/encoding';
 import type { Board, Color, PieceType } from '../lib/chess';
 
@@ -161,9 +162,19 @@ export const GET: APIRoute = async ({ url }) => {
 
   const svg = generateBoardSVG(state.board, state.lastMove);
 
-  return new Response(svg, {
+  // Convert SVG to PNG for OG image compatibility
+  const resvg = new Resvg(svg, {
+    fitTo: {
+      mode: 'width',
+      value: 1200,
+    },
+  });
+  const pngData = resvg.render();
+  const pngBuffer = pngData.asPng();
+
+  return new Response(pngBuffer, {
     headers: {
-      'Content-Type': 'image/svg+xml',
+      'Content-Type': 'image/png',
       'Cache-Control': 'public, max-age=31536000, immutable',
     },
   });
